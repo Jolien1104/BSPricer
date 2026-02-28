@@ -2,7 +2,63 @@
 @using MudBlazor
 @using Pricer.Numerics
 
-Add your design for a B-S pricer & implied vol calculator using MudBlazor components here
+<MudText Typo="Typo.h4" Class="mb-4">Black-Scholes Pricer</MudText>
+
+<MudGrid>
+    <MudItem xs="12" md="6">
+        <MudCard>
+            <MudCardContent>
+                <MudText Typo="Typo.h6" Class="mb-3">Parameters</MudText>
+
+                <MudSelect @bind-Value="optionType" Label="Optie type" Class="mb-2">
+                    <MudSelectItem Value="OptionType.Call">Call</MudSelectItem>
+                    <MudSelectItem Value="OptionType.Put">Put</MudSelectItem>
+                </MudSelect>
+
+                <MudNumericField @bind-Value="underlyingPrice" Label="Spot prijs (S)" Class="mb-2" />
+                <MudNumericField @bind-Value="strike" Label="Strike (K)" Class="mb-2" />
+                <MudNumericField @bind-Value="interestRate" Label="Risicovrije rente (r)" Format="F4" Class="mb-2" />
+                <MudNumericField @bind-Value="volatility" Label="Volatiliteit σ" Format="F4" Class="mb-2" />
+                <MudNumericField @bind-Value="timeToMaturity" Label="Looptijd T (jaren)" Format="F4" Class="mb-2" />
+
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" OnClick="CalculatePrice" Class="mt-2">
+                    Bereken prijs
+                </MudButton>
+
+                @if (price.HasValue)
+                {
+                    <MudText Class="mt-3">BS Prijs: <b>@price.Value.ToString("F4")</b></MudText>
+                }
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+
+    <MudItem xs="12" md="6">
+        <MudCard>
+            <MudCardContent>
+                <MudText Typo="Typo.h6" Class="mb-3">Implied Volatility</MudText>
+
+                <MudNumericField @bind-Value="marketPrice" Label="Marktprijs" Format="F4" Class="mb-2" />
+
+                <MudButton Variant="Variant.Filled" Color="Color.Secondary" OnClick="ComputeImpliedVol" Class="mb-2 mr-2">
+                    BS Implied Vol
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Secondary" OnClick="ComputeBachelierImpliedVol" Class="mb-2">
+                    Bachelier Implied Vol (ATM)
+                </MudButton>
+
+                @if (impliedVol.HasValue)
+                {
+                    <MudText Class="mt-2">BS Implied Vol: <b>@impliedVol.Value.ToString("P2")</b></MudText>
+                }
+                @if (bachelierImpliedVol.HasValue)
+                {
+                    <MudText>Bachelier Implied Vol: <b>@bachelierImpliedVol.Value.ToString("F4")</b></MudText>
+                }
+            </MudCardContent>
+        </MudCard>
+    </MudItem>
+</MudGrid>
 
 @code {
 

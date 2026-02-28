@@ -43,16 +43,26 @@ public class BlackScholes
 
     // Normal probability density function
     private static double n(double x)
-        => throw new NotImplementedException("Normal PDF not implemented;");
+        => Normal.PDF(0.0, 1.0, x);
 
 
     // Black–Scholes price
     public double Price()
     {
-        throw new NotImplementedException("Price calculation not implemented");
+        double d1 = (Math.Log(S / K) + (r - q + 0.5 * sigma * sigma) * T) 
+                    / (sigma * Math.Sqrt(T));
+        double d2 = d1 - sigma * Math.Sqrt(T);
+
+        if (option == OptionType.Call)
+            return S * Math.Exp(-q * T) * N(d1) - K * Math.Exp(-r * T) * N(d2);
+        else
+            return K * Math.Exp(-r * T) * N(-d2) - S * Math.Exp(-q * T) * N(-d1);
     }
 
-    public double Vega() => throw new NotImplementedException("Vega not implemented");
+    public double Vega()
+        => S * Math.Exp(-q * T) * Math.Sqrt(T) * n(
+            (Math.Log(S / K) + (r - q + 0.5 * sigma * sigma) * T) / (sigma * Math.Sqrt(T))
+        );
 
 }
 
@@ -73,7 +83,21 @@ public static class ImpliedVolatilityCalculator
         double tolerance = 1e-8,
         int maxIterations = 100)
     {
-        throw new NotImplementedException("Implied volatility calculation not implemented");
+        double sigma = initialGuess;
+
+        for (int i = 0; i < maxIterations; i++)
+        {
+            var bs = new BlackScholes(optionType, interestRate, timeToMaturity, sigma, strike, underlyingPrice);
+            double price = bs.Price();
+            double vega = bs.Vega();
+
+            double diff = price - marketPrice;
+            if (Math.Abs(diff) < tolerance) return sigma;
+
+            sigma -= diff / vega; // Newton-Raphson stap
+        }
+
+        return sigma; // beste schatting na maxIterations
     }
 
     public static double BachelierImpliedVolATM(
@@ -82,6 +106,6 @@ public static class ImpliedVolatilityCalculator
         double timeToMaturity,
         double interestRate)
     {
-       throw new NotImplementedException("Bachelier implied volatility calculation not implemented");
+        return (optionPrice / underlyingPrice) * Math.Sqrt(2 * Math.PI / timeToMaturity);
     }
 }

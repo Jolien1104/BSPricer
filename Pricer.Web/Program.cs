@@ -1,5 +1,5 @@
 using Pricer.Web.Components;
-using MudBlazor.Services;
+using MudBlazor.Services;       
 
 var builder = WebApplication.CreateBuilder(args);
 
