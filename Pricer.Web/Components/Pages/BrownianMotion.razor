@@ -1,0 +1,344 @@
+@page "/brownian-motion"
+@using System.Timers
+@using MudBlazor.Charts
+@implements IDisposable
+
+<PageTitle>Brownian Motion</PageTitle>
+
+<MudText Typo="Typo.h4" Class="mb-2">Brownian Motion Simulator</MudText>
+<MudText Typo="Typo.body2" Class="mb-6">
+    Visualise how the scaled symmetric random walk W⁽ⁿ⁾(t) = (1/√n)·M_nt converges to a Brownian motion,
+    and how diffusive scaling Var(ΔX) = σ²(Δt)^α determines the nature of the limiting process.
+</MudText>
+
+<MudGrid>
+
+    <!-- ── Slider 1: convergence ── -->
+    <MudItem xs="12" md="6">
+        <MudPaper Class="pa-4" Elevation="2">
+            <MudText Typo="Typo.h6" Class="mb-1">
+                Slider 1 — Scaled random walk W⁽ⁿ⁾
+            </MudText>
+            <MudText Typo="Typo.body2" Class="mb-1">
+                Each step is ±1/√n (coin toss), so Var[W⁽ⁿ⁾(t)−W⁽ⁿ⁾(s)] = t−s for all n.
+                As n → ∞, the scaled random walk W⁽ⁿ⁾(t) converges to a Brownian motion W(t).
+            </MudText>
+            <MudSlider T="int"
+                       Value="_n"
+                       ValueChanged="OnNChanged"
+                       Min="1" Max="500" Step="1"
+                       Color="Color.Primary">
+                n = @_n &nbsp;|&nbsp; step size = 1/√n ≈ @($"{1.0 / Math.Sqrt(_n):F4}") &nbsp;|&nbsp; Δt = @($"{1.0 / _n:F4}")
+            </MudSlider>
+            <MudText Typo="Typo.caption">@GetRandomWalkLabel()</MudText>
+        </MudPaper>
+    </MudItem>
+
+    <!-- ── Slider 2: diffusive scaling ── -->
+    <MudItem xs="12" md="6">
+        <MudPaper Class="pa-4" Elevation="2">
+            <MudText Typo="Typo.h6" Class="mb-1">
+                Slider 2 — Variance exponent α &nbsp; [Var(ΔX) = σ²(Δt)^α]
+            </MudText>
+            <MudText Typo="Typo.body2" Class="mb-1">
+                α &gt; 1 → Frozen &nbsp;|&nbsp; α = 1 → Brownian motion &nbsp;|&nbsp; α &lt; 1 → Explosion
+            </MudText>
+            <MudSlider T="double"
+                       Value="_alpha"
+                       ValueChanged="OnAlphaChanged"
+                       Min="0.0" Max="2.0" Step="0.05"
+                       Color="Color.Secondary">
+                α = @($"{_alpha:F2}") &nbsp;|&nbsp; Var(X_t) = σ²t·(Δt)^(α−1) &nbsp;→&nbsp; @GetAlphaRegimeShort()
+            </MudSlider>
+            <MudText Typo="Typo.caption">
+                Diffusive scaling requires α = 1, which forces ΔXk = √Δt · Yk with Yk i.i.d. N(0,1).
+            </MudText>
+        </MudPaper>
+    </MudItem>
+
+    <!-- ── Controls ── -->
+    <MudItem xs="12">
+        <MudPaper Class="pa-4" Elevation="1">
+            <MudStack Row="true" AlignItems="AlignItems.Center" Spacing="3" Wrap="Wrap.Wrap">
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           OnClick="Regenerate"
+                           StartIcon="@Icons.Material.Filled.Refresh">
+                    New Path
+                </MudButton>
+                <MudButton Variant="Variant.Outlined"
+                           Color="Color.Secondary"
+                           OnClick="ToggleAnimation"
+                           StartIcon="@(_animating ? Icons.Material.Filled.Stop : Icons.Material.Filled.PlayArrow)">
+                    @(_animating ? "Stop" : "Animate n → ∞")
+                </MudButton>
+                <MudText Typo="Typo.body2">Paths:</MudText>
+                <MudSlider T="int"
+                           Value="_numPaths"
+                           ValueChanged="OnNumPathsChanged"
+                           Min="1" Max="5" Step="1"
+                           Style="width:120px"
+                           Color="Color.Tertiary">
+                    @_numPaths
+                </MudSlider>
+            </MudStack>
+        </MudPaper>
+    </MudItem>
+
+    <!-- ── Chart ── -->
+    <MudItem xs="12">
+        <MudPaper Class="pa-4" Elevation="2">
+            <MudChart ChartType="ChartType.Timeseries"
+                      ChartSeries="@_series"
+                      ChartOptions="@_chartOptions"
+                      Width="100%"
+                      Height="420px" />
+        </MudPaper>
+    </MudItem>
+
+    <!-- ── Theory box ── -->
+    <MudItem xs="12" md="6">
+        <MudAlert Severity="@GetNAlertSeverity()" Variant="Variant.Outlined">
+            <MudText Typo="Typo.subtitle2">@GetNRegimeTitle()</MudText>
+            <MudText Typo="Typo.body2">@GetNRegimeDescription()</MudText>
+        </MudAlert>
+    </MudItem>
+    <MudItem xs="12" md="6">
+        <MudAlert Severity="@GetAlphaAlertSeverity()" Variant="Variant.Outlined">
+            <MudText Typo="Typo.subtitle2">@GetAlphaRegimeTitle()</MudText>
+            <MudText Typo="Typo.body2">@GetAlphaRegimeDescription()</MudText>
+        </MudAlert>
+    </MudItem>
+
+</MudGrid>
+
+@code {
+    // ── State ──────────────────────────────────────────────────────────────
+    // Slider 1: n = number of coin-toss steps on [0,1]
+    private int _n = 50;
+
+    // Slider 2: variance exponent α  (Var(ΔX) = σ²(Δt)^α)
+    private double _alpha = 1.0;
+
+    private int _numPaths = 1;
+
+    private List<ChartSeries<double>> _series = new();
+
+    private TimeSeriesChartOptions _chartOptions = new()
+    {
+        ShowLegend = true,
+        ShowDataMarkers = false,
+        YAxisRequireZeroPoint = false,
+        LineStrokeWidth = 1,
+    };
+
+    private bool _animating = false;
+    private System.Timers.Timer? _timer;
+    private int _animDir = 1;
+    private readonly Random _rng = new();
+
+    // Fixed time axis: t ∈ [0, 1] with base DateTime for the chart
+    private static readonly DateTime _t0 = new DateTime(2024, 1, 1);
+
+    // ── Lifecycle ──────────────────────────────────────────────────────────
+    protected override void OnInitialized() => RebuildChart();
+
+    // ── Slider callbacks ──────────────────────────────────────────────────
+    private void OnNChanged(int value)         { _n = value;        RebuildChart(); }
+    private void OnAlphaChanged(double value)  { _alpha = value;    RebuildChart(); }
+    private void OnNumPathsChanged(int value)  { _numPaths = value; RebuildChart(); }
+
+    // ── Chart construction ────────────────────────────────────────────────
+    private void RebuildChart()
+    {
+        _series = new List<ChartSeries<double>>();
+        for (int p = 0; p < _numPaths; p++)
+        {
+            _series.Add(new ChartSeries<double>
+            {
+                Name    = _numPaths == 1 ? "W⁽ⁿ⁾(t)" : $"W{p + 1}(t)",
+                Data    = GeneratePath(),
+                Visible = true,
+            });
+        }
+    }
+
+    /// <summary>
+    /// Generates one realisation of the scaled random walk W^(n)(t) with
+    /// diffusive-scaling exponent α applied to the per-step variance.
+    ///
+    /// Standard scaled RW (Slider 1 only, α = 1):
+    ///   ΔW = (1/√n) · Xk  where Xk ∈ {−1, +1} with prob 1/2 each
+    ///   ⟹  Var[W^(n)(t)] = t   for every n.
+    ///
+    /// General variance scaling (Slider 2, arbitrary α):
+    ///   Var(ΔX) = σ²(Δt)^α,  Δt = 1/n
+    ///   ⟹  ΔXk = (Δt)^(α/2) · Yk,  Yk ~ N(0,1)
+    ///
+    /// When α = 1  → ΔXk = √Δt · Yk          (standard BM scaling)
+    /// When α > 1  → step shrinks faster; Var(Xt) → 0  (freezing)
+    /// When α < 1  → step shrinks slower; Var(Xt) → ∞  (explosion)
+    ///
+    /// For the coin-toss slider we keep the discrete ±1/√n steps
+    /// when α = 1 to stay true to the theory; otherwise we switch to
+    /// the Gaussian model so the scaling effect is visible.
+    /// </summary>
+    private TimeValue<double>[] GeneratePath()
+    {
+        int    n  = _n;
+        double dt = 1.0 / n;               // Δt
+
+        var path = new TimeValue<double>[n + 1];
+        double x = 0.0;
+        path[0] = new TimeValue<double>(_t0, x);
+
+        for (int k = 1; k <= n; k++)
+        {
+            double dx;
+            if (Math.Abs(_alpha - 1.0) < 1e-9)
+            {
+                // Slider 1 regime: exact scaled symmetric RW
+                // ΔW = (1/√n) · Xk,  Xk ∈ {−1, +1}
+                double coin = _rng.NextDouble() < 0.5 ? -1.0 : 1.0;
+                dx = coin / Math.Sqrt(n);
+            }
+            else
+            {
+                // Slider 2 regime: general variance scaling
+                // ΔXk = (Δt)^(α/2) · Yk,  Yk ~ N(0,1)
+                dx = Math.Pow(dt, _alpha / 2.0) * SampleNormal();
+            }
+
+            x += dx;
+            // Map step k to DateTime so the Timeseries chart renders correctly
+            path[k] = new TimeValue<double>(_t0.AddSeconds(k * dt * 1000.0), x);
+        }
+
+        return path;
+    }
+
+    // Box-Muller standard normal sample
+    private double SampleNormal()
+    {
+        double u1 = 1.0 - _rng.NextDouble();
+        double u2 = 1.0 - _rng.NextDouble();
+        return Math.Sqrt(-2.0 * Math.Log(u1)) * Math.Cos(2.0 * Math.PI * u2);
+    }
+
+    private void Regenerate() => RebuildChart();
+
+    // ── Animation ─────────────────────────────────────────────────────────
+    private void ToggleAnimation()
+    {
+        if (_animating)
+        {
+            _timer?.Stop();
+            _animating = false;
+        }
+        else
+        {
+            _animating = true;
+            _n         = 1;
+            _animDir   = 1;
+            _timer     = new System.Timers.Timer(60);
+            _timer.Elapsed   += OnTimerTick;
+            _timer.AutoReset  = true;
+            _timer.Start();
+        }
+    }
+
+    private void OnTimerTick(object? sender, ElapsedEventArgs e)
+    {
+        _n += _animDir * 2;
+        if (_n >= 500) { _n = 500; _animDir = -1; }
+        if (_n <= 1)   { _n = 1;   _animDir =  1; }
+        RebuildChart();
+        InvokeAsync(StateHasChanged);
+    }
+
+    // ── Labels: Slider 1 (n) ──────────────────────────────────────────────
+    private string GetRandomWalkLabel() => _n switch
+    {
+        <= 5   => "⚠️  n very small — large ±1/√n jumps, clearly discrete",
+        <= 20  => "🔄  Coarse scaled RW — jagged, piecewise linear path",
+        <= 100 => "📈  Intermediate — path smoothing towards BM",
+        _      => "✅  Large n — W⁽ⁿ⁾ closely approximates Brownian motion"
+    };
+
+    private string GetNRegimeTitle() => _n switch
+    {
+        <= 5   => "Discrete random walk (n very small)",
+        <= 20  => "Coarse scaled random walk",
+        <= 100 => "Intermediate approximation",
+        _      => "Near-Brownian motion (n large)"
+    };
+
+    private string GetNRegimeDescription() => _n switch
+    {
+        <= 5   =>
+            "W⁽ⁿ⁾(t) = (1/√n)·M_nt with only a few steps. Steps of size ±1/√n are clearly visible. " +
+            "Var[W⁽ⁿ⁾(t)] = t, but the path is far from continuous.",
+        <= 20  =>
+            "The path is piecewise linear with identifiable ±1/√n jumps. " +
+            "Quadratic variation [W⁽ⁿ⁾,W⁽ⁿ⁾](t) = t already holds for every n.",
+        <= 100 =>
+            "Increments are shrinking. The path is converging towards a continuous limit. " +
+            "The finite-dimensional distributions already closely resemble N(0,t−s).",
+        _      =>
+            "n is large: the scaled random walk has converged to W, a standard Brownian motion " +
+            "with Var[W(t)] = t and nowhere-differentiable, continuous paths."
+    };
+
+    private Severity GetNAlertSeverity() => _n switch
+    {
+        <= 5   => Severity.Warning,
+        <= 20  => Severity.Info,
+        <= 100 => Severity.Normal,
+        _      => Severity.Success
+    };
+
+    // ── Labels: Slider 2 (α) ─────────────────────────────────────────────
+    private string GetAlphaRegimeShort() => _alpha switch
+    {
+        > 1.05  => "❄️ Frozen",
+        >= 0.95 => "🌊 BM",
+        _       => "💥 Explosion"
+    };
+
+    private string GetAlphaRegimeTitle() => _alpha switch
+    {
+        > 1.05  => $"Freezing (α = {_alpha:F2} > 1)",
+        >= 0.95 => $"Diffusive / Brownian motion (α ≈ 1)",
+        _       => $"Explosion (α = {_alpha:F2} < 1)"
+    };
+
+    private string GetAlphaRegimeDescription() => _alpha switch
+    {
+        > 1.05  =>
+            $"Var(ΔX) = σ²(Δt)^{_alpha:F2} shrinks too fast. " +
+            $"Var(X_t) = σ²t·(Δt)^({_alpha:F2}−1) → 0 as Δt→0. " +
+            "The process freezes at its mean — randomness disappears.",
+        >= 0.95 =>
+            "α = 1: unique CLT-compatible scaling. " +
+            "ΔXk = √Δt · Yk forces Var(X_t) → σ²t — a finite, nonzero limit. " +
+            "The limit process is a standard Brownian motion.",
+        _       =>
+            $"Var(ΔX) = σ²(Δt)^{_alpha:F2} shrinks too slowly. " +
+            $"Var(X_t) = σ²t·(Δt)^({_alpha:F2}−1) → ∞ as Δt→0. " +
+            "No finite continuous-time limit exists — the process explodes."
+    };
+
+    private Severity GetAlphaAlertSeverity() => _alpha switch
+    {
+        > 1.05  => Severity.Info,
+        >= 0.95 => Severity.Success,
+        _       => Severity.Error
+    };
+
+    // ── IDisposable ───────────────────────────────────────────────────────
+    public void Dispose()
+    {
+        _timer?.Stop();
+        _timer?.Dispose();
+    }
+}
