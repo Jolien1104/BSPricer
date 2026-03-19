@@ -1,5 +1,6 @@
-﻿@page "/blackscholespricer"
+@page "/blackscholespricer"
 @using MudBlazor
+@using MudBlazor.Charts
 @using Pricer.Numerics
 
 <MudText Typo="Typo.h4" Class="mb-4">Black-Scholes Pricer</MudText>
@@ -58,58 +59,246 @@
             </MudCardContent>
         </MudCard>
     </MudItem>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         BS PRICE CONVERGENCE TO INTRINSIC VALUE
+         ══════════════════════════════════════════════════════════════════ -->
+
+    <MudItem xs="12">
+        <MudDivider Class="my-4" />
+        <MudText Typo="Typo.h5" Class="mb-1">Convergence to Intrinsic Value</MudText>
+        <MudText Typo="Typo.body2" Class="mb-4">
+            The chart shows the Black-Scholes call price as a function of spot price S,
+            for a given time to maturity τ. As τ → 0, the BS curve converges to the
+            payoff max(S − K, 0) — the kinked line at maturity.
+        </MudText>
+    </MudItem>
+
+    <!-- ── Slider: time to maturity τ ── -->
+    <MudItem xs="12" md="8">
+        <MudPaper Class="pa-4" Elevation="2">
+            <MudText Typo="Typo.h6" Class="mb-1">Time to maturity τ</MudText>
+            <MudText Typo="Typo.body2" Class="mb-2">
+                Drag τ towards 0 to watch the BS price curve collapse onto the intrinsic value (payoff).
+            </MudText>
+            <MudSlider T="double"
+                       Value="@(timeToMaturity - _tau)"
+                       ValueChanged="@(v => OnTauChanged(timeToMaturity - v))"
+                       Min="0.001"
+                       Max="@timeToMaturity"
+                       Step="0.001"
+                       Immediate="true"
+                       Color="Color.Primary">
+                        t = @($"{timeToMaturity - _tau:F3}") years &nbsp;|&nbsp; τ = @($"{_tau:F3}") years &nbsp;|&nbsp; T = @($"{timeToMaturity:F2}") years
+            </MudSlider>
+            <MudText Typo="Typo.caption">
+                @GetTauLabel()
+            </MudText>
+        </MudPaper>
+    </MudItem>
+
+    <!-- ── Alert ── -->
+    <MudItem xs="12" md="4">
+        <MudAlert Severity="@GetConvergenceSeverity()" Variant="Variant.Outlined" Style="height:100%">
+            <MudText Typo="Typo.subtitle2">@GetConvergenceTitle()</MudText>
+            <MudText Typo="Typo.body2">@GetConvergenceDescription()</MudText>
+        </MudAlert>
+    </MudItem>
+
+    <!-- ── Chart: BS price vs S ── -->
+    <MudItem xs="12">
+        <MudPaper Class="pa-4" Elevation="2">
+            <MudChart ChartType="ChartType.Timeseries"
+                      ChartSeries="@_convergenceSeries"
+                      ChartOptions="@_convergenceOptions"
+                      Width="100%"
+                      Height="400px" />
+        </MudPaper>
+    </MudItem>
+
 </MudGrid>
 
 @code {
 
+    // ══════════════════════════════════════════════════════════════════
+    // Existing state
+    // ══════════════════════════════════════════════════════════════════
+
     private OptionType optionType = OptionType.Call;
 
     private double underlyingPrice = 100;
-    private double strike = 100;
-    private double interestRate = 0.05;
-    private double volatility = 0.2;
-    private double timeToMaturity = 1.0;
+    private double strike          = 100;
+    private double interestRate    = 0.05;
+    private double volatility      = 0.2;
+    private double timeToMaturity  = 1.0;
 
     private double? price;
     private string? errorMessage;
 
-    private double marketPrice = 10.0;
-    private double tolerance = 1e-8;
-    private int maxIterations = 100;
+    private double  marketPrice        = 10.0;
+    private double  tolerance          = 1e-8;
+    private int     maxIterations      = 100;
     private double? impliedVol;
     private double? bachelierImpliedVol;
 
+    // ══════════════════════════════════════════════════════════════════
+    // Convergence chart state
+    // ══════════════════════════════════════════════════════════════════
+
+    // τ = time to maturity, slider goes from T down to ~0
+    private double _tau = 1.0;
+
+    private List<ChartSeries<double>> _convergenceSeries = new();
+
+    private static readonly DateTime _t0chart = new DateTime(2024, 1, 1);
+
+    private TimeSeriesChartOptions _convergenceOptions = new()
+    {
+        ShowLegend      = true,
+        ShowDataMarkers = false,
+        LineStrokeWidth = 2,
+    };
+
+    // S ranges from 0.5*K to 1.5*K across ChartPoints
+    private const int ChartPoints = 100;
+
+    // ══════════════════════════════════════════════════════════════════
+    // Lifecycle
+    // ══════════════════════════════════════════════════════════════════
+
+    protected override void OnInitialized()
+    {
+        _tau = timeToMaturity;
+        RebuildConvergenceChart();
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Existing methods
+    // ══════════════════════════════════════════════════════════════════
+
     private void CalculatePrice()
     {
-        var blackScholesPricer = new BlackScholes(
-            optionType,
-            interestRate,
-            timeToMaturity,
-            volatility,
-            strike,
-            underlyingPrice
-        );
+        var bs = new BlackScholes(
+            optionType, interestRate, timeToMaturity, volatility, strike, underlyingPrice);
+        price = bs.Price();
 
-        price = blackScholesPricer.Price();
+        // Reset tau slider to T when parameters change
+        _tau = timeToMaturity;
+        RebuildConvergenceChart();
     }
 
     private void ComputeImpliedVol()
     {
         impliedVol = ImpliedVolatilityCalculator.Compute(
-            optionType,
-            marketPrice,
-            interestRate,
-            timeToMaturity,
-            strike,
-            underlyingPrice,
-            0.2D,
-            tolerance,
-            maxIterations
-        );
+            optionType, marketPrice, interestRate, timeToMaturity,
+            strike, underlyingPrice, 0.2D, tolerance, maxIterations);
     }
 
     private void ComputeBachelierImpliedVol()
     {
-        bachelierImpliedVol = ImpliedVolatilityCalculator.BachelierImpliedVolATM(marketPrice, underlyingPrice, timeToMaturity, interestRate);
+        bachelierImpliedVol = ImpliedVolatilityCalculator.BachelierImpliedVolATM(
+            marketPrice, underlyingPrice, timeToMaturity, interestRate);
     }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Convergence chart — x-axis = spot S, y-axis = option price
+    // ══════════════════════════════════════════════════════════════════
+
+    private void OnTauChanged(double value)
+    {
+        _tau = value;
+        RebuildConvergenceChart();
+    }
+
+    private void RebuildConvergenceChart()
+    {
+        // Spot range: 50% to 150% of strike
+        double sMin = strike * 0.5;
+        double sMax = strike * 1.5;
+
+        var bsPrices    = new double[ChartPoints];
+        var payoff      = new double[ChartPoints];
+
+        for (int i = 0; i < ChartPoints; i++)
+        {
+            double s = sMin + i * (sMax - sMin) / (ChartPoints - 1);
+
+            // BS price at this spot and current τ
+            var bs   = new BlackScholes(optionType, interestRate, _tau, volatility, strike, s);
+            bsPrices[i] = bs.Price();
+
+            // Payoff at maturity
+            payoff[i] = optionType == OptionType.Call
+                ? Math.Max(s - strike, 0)
+                : Math.Max(strike - s, 0);
+        }
+
+        _convergenceSeries = new List<ChartSeries<double>>
+        {
+            new()
+            {
+                Name    = $"BS Price (τ={_tau:F3})",
+                Data    = Enumerable.Range(0, ChartPoints)
+                    .Select(i => new TimeValue<double>(
+                        _t0chart.AddSeconds(i * 1000.0),
+                        bsPrices[i]))
+                    .ToArray(),
+                Visible = true,
+            },
+            new()
+            {
+                Name    = "Payoff at maturity",
+                Data    = Enumerable.Range(0, ChartPoints)
+                    .Select(i => new TimeValue<double>(
+                        _t0chart.AddSeconds(i * 1000.0),
+                        payoff[i]))
+                    .ToArray(),
+                Visible = true,
+            },
+        };
+    }
+
+    // ══════════════════════════════════════════════════════════════════
+    // Labels
+    // ══════════════════════════════════════════════════════════════════
+
+    private string GetTauLabel() => _tau switch
+    {
+        > 0.5  => $"Large time to maturity — BS price has significant time value above payoff",
+        > 0.1  => $"Time value eroding — BS curve approaching the payoff kink",
+        > 0.01 => $"Almost at maturity — BS price ≈ intrinsic value",
+        _      => $"τ ≈ 0 — BS price = payoff = max(S−K, 0)"
+    };
+
+    private string GetConvergenceTitle() => _tau switch
+    {
+        > 0.5  => "Far from maturity",
+        > 0.1  => "Approaching maturity",
+        > 0.01 => "Near maturity",
+        _      => "At maturity"
+    };
+
+    private string GetConvergenceDescription() => _tau switch
+    {
+        > 0.5  =>
+            "The BS curve sits well above the payoff due to time value. " +
+            "The option price includes the probability of S moving in-the-money before expiry.",
+        > 0.1  =>
+            "Time value is shrinking. The BS curve is bending towards the kinked payoff line. " +
+            "Theta (time decay) accelerates as τ → 0.",
+        > 0.01 =>
+            "Almost no time value remains. The smooth BS curve has nearly collapsed " +
+            "onto the piecewise-linear payoff max(S−K, 0).",
+        _      =>
+            "τ ≈ 0: the option expires. BS price = payoff = max(S−K, 0). " +
+            "The smooth curve has fully converged to the kinked line."
+    };
+
+    private Severity GetConvergenceSeverity() => _tau switch
+    {
+        > 0.5  => Severity.Info,
+        > 0.1  => Severity.Normal,
+        > 0.01 => Severity.Warning,
+        _      => Severity.Success
+    };
 }
