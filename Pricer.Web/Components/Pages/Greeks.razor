@@ -1,0 +1,168 @@
+@page "/greeks"
+@using Pricer.Numerics
+@using Plotly.Blazor
+@using Plotly.Blazor.Traces
+@using Plotly.Blazor.LayoutLib
+@using Plotly.Blazor.Traces.ScatterLib
+@using Plotly.Blazor.ConfigLib
+@using Plotly.Blazor.LayoutLib.LegendLib
+
+<MudText Typo="Typo.h4" Class="mb-2">Greeks</MudText>
+<MudText Typo="Typo.body2" Class="mb-4">
+    Call option with K = @K, r = @(r * 100)%, and maturity fixed at t = 1
+</MudText>
+
+<!-- Strategy selector -->
+<MudSelect T="Strategy" Label="Strategy" Value="selectedStrategy"
+           Variant="Variant.Outlined" Class="mb-4" Style="max-width:220px"
+           ValueChanged="OnStrategyChanged">
+    @foreach (Strategy s in Enum.GetValues<Strategy>())
+    {
+        <MudSelectItem Value="s">@s.ToString()</MudSelectItem>
+    }
+</MudSelect>
+
+<!-- Sliders -->
+<MudGrid Class="mb-4">
+    <MudItem xs="12" sm="6">
+        <MudText Typo="Typo.body2">Volatility: σ = <strong>@sigma.ToString("F2")</strong></MudText>
+        <MudSlider T="double" Min="0.05" Max="1.0" Step="0.01"
+                   Value="sigma" Immediate="true"
+                   ValueChanged="OnSigmaChanged"
+                   Color="Color.Primary" />
+    </MudItem>
+    <MudItem xs="12" sm="6">
+        <MudText Typo="Typo.body2">Time to maturity: τ = <strong>@tau.ToString("F2")</strong></MudText>
+        <MudSlider T="double" Min="0.01" Max="1.0" Step="0.01"
+                   Value="tau" Immediate="true"
+                   ValueChanged="OnTauChanged"
+                   Color="Color.Secondary" />
+    </MudItem>
+</MudGrid>
+
+<!-- Charts: 2 op top, 3 onderaan -->
+<MudGrid>
+    <MudItem xs="12" sm="6">
+        <MudText Typo="Typo.subtitle1"><b>Price</b></MudText>
+        <PlotlyChart @bind-Data="priceData" @bind-Layout="smallLayout" Config="config" @ref="priceChart" />
+    </MudItem>
+    <MudItem xs="12" sm="6">
+        <MudText Typo="Typo.subtitle1"><b>Delta</b></MudText>
+        <PlotlyChart @bind-Data="deltaData" @bind-Layout="smallLayout" Config="config" @ref="deltaChart" />
+    </MudItem>
+    <MudItem xs="12" sm="4">
+        <MudText Typo="Typo.subtitle1"><b>Gamma</b></MudText>
+        <PlotlyChart @bind-Data="gammaData" @bind-Layout="smallLayout" Config="config" @ref="gammaChart" />
+    </MudItem>
+    <MudItem xs="12" sm="4">
+        <MudText Typo="Typo.subtitle1"><b>Theta</b></MudText>
+        <PlotlyChart @bind-Data="thetaData" @bind-Layout="smallLayout" Config="config" @ref="thetaChart" />
+    </MudItem>
+    <MudItem xs="12" sm="4">
+        <MudText Typo="Typo.subtitle1"><b>Vega</b></MudText>
+        <PlotlyChart @bind-Data="vegaData" @bind-Layout="smallLayout" Config="config" @ref="vegaChart" />
+    </MudItem>
+</MudGrid>
+
+@code {
+    private const double K = 100.0;
+    private const double r = 0.05;
+
+    private double sigma = 0.20;
+    private double tau   = 1.00;
+    private Strategy selectedStrategy = Strategy.Call;
+
+    private static readonly double[] Spots =
+        Enumerable.Range(0, 81).Select(i => 60.0 + i).ToArray(); // 60 tot 140
+
+    // Plotly refs
+    private PlotlyChart? priceChart, deltaChart, gammaChart, thetaChart, vegaChart;
+
+    private Config config = new() { Responsive = true, DisplayModeBar = DisplayModeBarEnum.False };
+
+    private Layout smallLayout = new()
+    {
+        Height = 220,
+        Margin = new() { T = 10, B = 40, L = 50, R = 10 },
+        ShowLegend = true,
+        Legend = new List<Legend> { new Legend { Orientation = Plotly.Blazor.LayoutLib.LegendLib.OrientationEnum.H, Y = (decimal?)(-0.2) } },
+        PaperBgColor = "rgba(0,0,0,0)",
+        PlotBgColor  = "rgba(0,0,0,0)",
+    };
+
+    private IList<ITrace> priceData = new List<ITrace>();
+    private IList<ITrace> deltaData = new List<ITrace>();
+    private IList<ITrace> gammaData = new List<ITrace>();
+    private IList<ITrace> thetaData = new List<ITrace>();
+    private IList<ITrace> vegaData  = new List<ITrace>();
+
+    protected override void OnInitialized() => BuildAllTraces();
+
+    private async Task OnStrategyChanged(Strategy s) { selectedStrategy = s; BuildAllTraces(); await UpdateChartsAsync(); }
+    private async Task OnSigmaChanged(double v)       { sigma = v;            BuildAllTraces(); await UpdateChartsAsync(); }
+    private async Task OnTauChanged(double v)         { tau = v;              BuildAllTraces(); await UpdateChartsAsync(); }
+
+    private async Task UpdateChartsAsync()
+    {
+        if (priceChart is not null) await priceChart.React();;;
+        if (deltaChart is not null) await deltaChart.React();
+        if (gammaChart is not null) await gammaChart.React();
+        if (thetaChart is not null) await thetaChart.React();
+        if (vegaChart  is not null) await vegaChart.React();
+    }
+
+    private void BuildAllTraces()
+    {
+        var x = Spots.Select(s => (object)s).ToList();
+
+        var prices  = new List<object>();
+        var intrins = new List<object>();
+        var deltas  = new List<object>();
+        var gammas  = new List<object>();
+        var thetas  = new List<object>();
+        var vegas   = new List<object>();
+
+        foreach (double S in Spots)
+        {
+            var (price, delta, gamma, theta, vega) =
+                StrategyGreeks.Compute(selectedStrategy, S, K, r, sigma, tau);
+
+            prices.Add(Math.Round(price, 4));
+            intrins.Add(Math.Round(IntrinsicValue(selectedStrategy, S, K), 4));
+            deltas.Add(Math.Round(delta, 4));
+            gammas.Add(Math.Round(gamma, 6));
+            thetas.Add(Math.Round(theta/365.0, 4));
+            vegas.Add(Math.Round(vega,  4));
+        }
+
+        priceData = new List<ITrace>
+        {
+            new Scatter { X = x, Y = prices,  Name = "BS Price",  Mode = ModeFlag.Lines,
+                          Line = new() { Color = "#EF6C00", Width = 2 } },
+            new Scatter { X = x, Y = intrins, Name = "Intrinsic",   Mode = ModeFlag.Lines,
+                          Line = new() { Color = "#1565C0", Width = 2 } },
+        };
+        deltaData = new List<ITrace> { MakeLine(x, deltas, "Delta", "#1976D2") };
+        gammaData = new List<ITrace> { MakeLine(x, gammas, "Gamma", "#1976D2") };
+        thetaData = new List<ITrace> { MakeLine(x, thetas, "Theta", "#1976D2") };
+        vegaData  = new List<ITrace> { MakeLine(x, vegas,  "Vega",  "#1976D2") };
+    }
+
+    private static ITrace MakeLine(List<object> x, List<object> y, string name, string color) =>
+        new Scatter { X = x, Y = y, Name = name, Mode = ModeFlag.Lines,
+                      Line = new() { Color = color, Width = 2 } };
+
+    private static double IntrinsicValue(Strategy strategy, double S, double K)
+    {
+        double wing = 20.0;
+        return strategy switch
+        {
+            Strategy.Call       => Math.Max(S - K, 0),
+            Strategy.Put        => Math.Max(K - S, 0),
+            Strategy.CallSpread => Math.Max(S - K, 0) - Math.Max(S - (K + wing), 0),
+            Strategy.Straddle   => Math.Max(S - K, 0) + Math.Max(K - S, 0),
+            Strategy.Butterfly  => Math.Max(S-(K-wing),0) - 2*Math.Max(S-K,0) + Math.Max(S-(K+wing),0),
+            _                   => 0
+        };
+    }
+}
