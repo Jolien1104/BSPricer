@@ -1,0 +1,151 @@
+@page "/binomial-tree"
+@using Pricer.Numerics
+@inject IJSRuntime JS
+
+<PageTitle>Binomial Tree Pricer</PageTitle>
+
+<h3 class="mb-4">Binomial Tree Pricer</h3>
+
+<div class="row g-3 mb-4">
+
+    <!-- Parameters card -->
+    <div class="col-12 col-lg-5">
+        <div class="card h-100">
+            <div class="card-header">Parameters</div>
+            <div class="card-body">
+                <div class="mb-3">
+                    <label class="form-label">Spot price S = <strong>@S.ToString("F0")</strong></label>
+                    <input type="range" class="form-range" min="50" max="150" step="1"
+                            value="@S" @oninput="e => { S = double.Parse(e.Value!.ToString()!); Recalculate(); }" />
+
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Strike K = <strong>@K.ToString("F0")</strong></label>
+                    <input type="range" class="form-range" min="50" max="150" step="1"
+                            value="@K" @oninput="e => { K = double.Parse(e.Value!.ToString()!); Recalculate(); }" />
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Volatility σ = <strong>@((Sigma * 100).ToString("F0"))%</strong></label>
+                    <input type="range" class="form-range" min="0.05" max="0.8" step="0.01"
+                           value="@Sigma" @oninput="e => { Sigma = double.Parse(e.Value!.ToString()!, System.Globalization.CultureInfo.InvariantCulture); Recalculate(); }" />
+
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Risk-free rate r = <strong>@((R * 100).ToString("F1"))%</strong></label>
+                    <input type="range" class="form-range" min="0" max="0.15" step="0.005"
+                           value="@R" @oninput="e => { R = double.Parse(e.Value!.ToString()!, System.Globalization.CultureInfo.InvariantCulture); Recalculate(); }" />
+
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Maturity T = <strong>@T.ToString("F1") yr</strong></label>
+                    <input type="range" class="form-range" min="0.1" max="3" step="0.1"
+                    value="@T" @oninput="e => { T = double.Parse(e.Value!.ToString()!, System.Globalization.CultureInfo.InvariantCulture); Recalculate(); }" />
+                </div>
+                <div class="mb-0">
+                    <label class="form-label">Steps n = <strong>@N</strong></label>
+                    <input type="range" class="form-range" min="1" max="500" step="1"
+                            value="@N" @oninput="e => { N = int.Parse(e.Value!.ToString()!); Recalculate(); }" />
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results card -->
+    <div class="col-12 col-lg-7">
+        <div class="card h-100">
+            <div class="card-header">European Call – Prices</div>
+            <div class="card-body">
+                <div class="row g-3 text-center mb-4">
+                    <div class="col-6">
+                        <div class="p-3 border rounded">
+                            <div class="text-muted small">Binomial (n = @N)</div>
+                            <div class="fs-3 fw-semibold">@_binomialPrice.ToString("F4")</div>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="p-3 border rounded">
+                            <div class="text-muted small">Black-Scholes (exact)</div>
+                            <div class="fs-3 fw-semibold text-success">@_bsPrice.ToString("F4")</div>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="p-3 border rounded">
+                            <div class="text-muted small">Absolute error</div>
+                            <div class="fs-4 fw-semibold @ErrorClass">@_absError.ToString("F4")</div>
+                        </div>
+                    </div>
+                    <div class="col-6">
+                        <div class="p-3 border rounded">
+                            <div class="text-muted small">Relative error</div>
+                            <div class="fs-4 fw-semibold @ErrorClass">@((_relError * 100).ToString("F3"))%</div>
+                        </div>
+                    </div>
+                </div>
+
+                <table class="table table-sm table-bordered">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Steps n</th>
+                            <th>Binomial price</th>
+                            <th>|Error|</th>
+                            <th>Rel. error</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var pt in _convergenceTable)
+                        {
+                            <tr class="@(pt.Steps == N ? "table-primary" : "")">
+                                <td>@pt.Steps</td>
+                                <td>@pt.BinomialPrice.ToString("F4")</td>
+                                <td>@pt.AbsoluteError.ToString("F4")</td>
+                                <td>@((pt.RelativeError * 100).ToString("F3"))%</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Convergence chart -->
+<div class="card mb-4">
+    <div class="card-header">Convergence to Black-Scholes as n grows</div>
+    <div class="card-body">
+        <canvas id="convergenceChart" height="280"></canvas>
+    </div>
+</div>
+
+@code {
+    // Parameters
+    private double S = 100, K = 100, Sigma = 0.20, R = 0.05, T = 1.0;
+    private int N = 50;
+
+    // Results
+    private double _binomialPrice, _bsPrice, _absError, _relError;
+    private IReadOnlyList<ConvergencePoint> _convergenceTable = Array.Empty<ConvergencePoint>();
+
+    private string ErrorClass => _relError < 0.005 ? "text-success" : _relError < 0.02 ? "text-warning" : "text-danger";
+
+    // Step counts for the convergence table and chart
+    private static readonly int[] TableSteps = [1, 2, 5, 10, 20, 50, 100, 200, 500];
+
+    protected override void OnInitialized() => Recalculate();
+
+    private void Recalculate()
+    {
+        _bsPrice = new BlackScholes(OptionType.Call, R, T, Sigma, K, S).Price();
+        _binomialPrice = BinomialTree.EuropeanCall(S, K, R, Sigma, T, N);
+        _absError      = Math.Abs(_binomialPrice - _bsPrice);
+        _relError      = _bsPrice > 1e-10 ? _absError / _bsPrice : 0;
+        _convergenceTable = BinomialTree.ConvergenceProfile(S, K, R, Sigma, T, TableSteps);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        var labels = _convergenceTable.Select(p => p.Steps).ToArray();
+        var binom  = _convergenceTable.Select(p => Math.Round(p.BinomialPrice, 4)).ToArray();
+        var bs     = _convergenceTable.Select(_ => Math.Round(_bsPrice, 4)).ToArray();
+        await JS.InvokeVoidAsync("renderConvergenceChart", "convergenceChart", labels, binom, bs);
+    }
+}
